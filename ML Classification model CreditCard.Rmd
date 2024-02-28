@@ -29,7 +29,7 @@ fig <- function(width, heigth){
 ## Classification models
 
 ```{r import, echo=TRUE}
-df<- read.csv("F:/Statistics seminars DC/ML in R Fishing example/ML Supervised Classification/creditcard.csv", stringsAsFactors=TRUE)
+df<- read.csv("F:/-Directory-/creditcard.csv", stringsAsFactors=TRUE)
 
 df1<- df #%>%select(Class, Time, Amount)
 # Convert class to factor
