@@ -1,0 +1,323 @@
+---
+title: "CreditCard Fraud"
+author: "Mike Jadoo"
+date: "2024-02-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load, echo=FALSE}
+library(caTools)
+library(lares)
+library(cvms) 
+library(yardstick)
+library(ggplot2)
+# load pk
+library(caret)
+library(tidymodels)
+# function to set plot height and width
+fig <- function(width, heigth){
+     options(repr.plot.width = width, repr.plot.height = heigth)
+}
+
+```
+
+## Classification models
+
+```{r import, echo=TRUE}
+df<- read.csv("F:/Statistics seminars DC/ML in R Fishing example/ML Supervised Classification/creditcard.csv", stringsAsFactors=TRUE)
+
+df1<- df #%>%select(Class, Time, Amount)
+# Convert class to factor
+df1 <- df1 %>%
+  mutate(Class = factor(Class, levels = c("1", "0"))) 
+
+#checking if the Class variable is a factor
+class(df1$Class)
+```
+We start to explore our datatable and perform some visuals (EDA)
+
+
+```{r eda, echo=TRUE}
+# Explore the dependent variable
+str(df)
+summary(df1)
+table(df1$Class)
+```
+
+Looking at the distribution of the class variable
+
+```{r vizx, echo=TRUE}
+fig(12, 8)
+common_theme <- theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggplot(data = df1, aes(x = factor(Class), 
+                          y = prop.table(stat(count)), fill = factor(Class),
+                          label = scales::percent(prop.table(stat(count))))) +
+    geom_bar(position = "dodge") + 
+    geom_text(stat = 'count',
+              position = position_dodge(.9), 
+              vjust = -0.5, 
+              size = 3) + 
+    scale_x_discrete(labels = c( "fraud","no fraud"))+
+    scale_y_continuous(labels = scales::percent)+
+    labs(x = 'Class', y = 'Percentage') +
+    ggtitle("Distribution of class labels") +
+    common_theme
+```
+
+Looking at the distribution of time by class
+
+
+```{r viz, echo=TRUE}
+fig(14, 8)
+df1 %>%
+  ggplot(aes(x = Time, fill = factor(Class))) + geom_histogram(bins = 100)+
+  labs(x = 'Time in seconds since first transaction', y = 'No. of transactions') +
+  ggtitle('Distribution of time of transaction by class') +
+  facet_grid(Class ~ ., scales = 'free_y') + common_theme
+```
+
+#The ‘Time’ feature looks pretty similar across both types of transactions Fraud or no fraud. One could argue that fraudulent transactions are more uniformly distributed, while normal transactions have a cyclical distribution
+
+
+```{r miss, echo=TRUE}
+# count total missing values 
+
+print("Count of total missing values  ")
+sum(is.na(df1))
+
+print("Which column has missing values  ")
+colSums(is.na(df1))
+```
+
+Now lets start with our supervised learning model (Classification)
+
+```{r split, echo=TRUE}
+set.seed(42)
+df_split<- sample.split(df1,SplitRatio = 0.8)
+# Set seed for reproducible results
+train = subset(df1, df_split == TRUE)
+test  = subset(df1, df_split == FALSE)
+
+
+```
+
+Lets look at the training dataset and to see Fraudulent transactions across time.
+
+```{r}
+## Target Variable `time` Analysis
+## Are there any tendency in time where fraud occurred?
+# Splitting data by fraud class
+CC_no_fraud <- train %>% filter(Class == 0)
+CC_fraud <- train %>% filter(Class == 1)
+
+# Scatterplot
+
+CC_fraud %>% ggplot(aes(x=Time, y=Amount)) +
+  geom_point() +
+  labs(
+  y = "Amount ($)", 
+  x = "Time (s)",
+  title= "Fraudulent Transactions Across Time"
+ )
+```
+
+Using recipe function to do some preprocessing. 
+
+```{r preproces, echo=TRUE}
+# Define the recipe for data preprocessing
+creditc_recipe <- recipe(Class ~ ., data = train) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_predictors())
+```
+
+Below we create a workflow for our model and scale our data except for the 
+dependent variable. 
+
+```{r model, echo=FALSE}
+
+
+# Define the logistic regression model
+log_reg <- logistic_reg() %>% 
+  set_engine("glm") %>% 
+  set_mode("classification")
+
+# Create a workflow with the logistic regression model and recipe
+log_wkflow <- workflow() %>% 
+  add_model(log_reg) %>% 
+   add_recipe(creditc_recipe)
+
+# Fit the model using the workflow and training data
+log_fit <- fit(log_wkflow, data = train)
+```
+Create predictions on the test dataset
+
+```{r pred, echo=TRUE}
+# Perform predictions on the test data
+log_test <- predict(log_fit, new_data = test) %>% 
+  bind_cols(test %>% select(Class))
+
+
+```
+
+Creating model evaulation measures.  Below is the confusion matrix
+
+```{r confmatrx, echo=TRUE}
+#convert table to fit the function that creates the confusion matrix viz
+basic_table <- table(log_test)
+basic_table
+
+cfm <- as_tibble(basic_table)
+cfm
+plot_confusion_matrix(cfm, 
+                      target_col = "Class", 
+                      prediction_col = ".pred_class",
+                      counts_col = "n")
+```
+
+
+
+```{r accur, echo=TRUE}
+# Calculate accuracy
+result <- confusionMatrix(log_test$.pred_class, log_test$Class)
+precision <- result$byClass['Pos Pred Value']    
+recall <- result$byClass['Sensitivity']
+#accuracy(log_test, truth = Class, estimate = .pred_class)
+
+print(result$byClass)
+```
+
+```{r fscore, echo=TRUE}
+f_measure <- 2 * ((precision * recall) / (precision + recall))
+f_measure
+```
+
+
+```{r precrecal, echo=TRUE}
+
+
+precision <- result$byClass['Pos Pred Value']    
+recall <- result$byClass['Sensitivity']
+
+```
+
+
+
+```{r plotauc, echo=TRUE}
+# Generate predictions and calculate AUC
+log_predictions <- predict(log_fit, test, type = "prob")
+log_test <- tibble::add_column(test, .pred_1 = log_predictions$.pred_1)
+
+# Plot the ROC curve
+log_test %>%
+  roc_curve(Class, .pred_1) %>%
+  autoplot()
+```
+
+
+
+```{r rocauc, echo=TRUE}
+# Generate predictions and calculate AUC
+log_predictions <- predict(log_fit, test, type = "prob")
+log_test <- tibble::add_column(test, .pred_1 = log_predictions$.pred_1)
+
+# Plot the ROC curve
+log_test %>%
+  roc_auc(Class, .pred_1)
+
+#the classifier roc_auc is .96, this means that the model is able to  
+# distinguish between all Positive and Negative class points. 
+```
+
+
+##Neural Networks
+Subset of machine learning which is inspired by the human brain. They mimic how biological neurons communicate with one another to come up with a decision. 
+A neural network consists of an input layer, a hidden layer, and an output layer. The first layer receives raw input, it is processed by multiple hidden layers, and the last layer produces the result. 
+
+```{r neural, echo=TRUE}
+
+library(neuralnet) 
+
+#split the data 80/20
+index <- createDataPartition(y = df$Class, p=  0.8, list = F)
+creditcard.training <- df[index,]
+creditcard.test <- df[-index,]
+
+#Scale the datasets variables except the dependent variable Class
+creditcart.training.two <- creditcard.training%>% mutate_at(c(1:30), funs(c(scale(.))))
+
+nn_model <- neuralnet(Class ~ ., data = creditcart.training.two, hidden = c(5,2), linear.output = F)
+
+
+# plot our neural network  
+plot(nn_model, rep ="best")
+
+```
+
+Now that our model has been trained we scale the test data and begin predictions:
+
+
+```{r test, echo=TRUE}
+
+
+#scale the test set
+creditcart.test.two <- creditcard.test %>% mutate_at(c(1:30), funs(c(scale(.))))
+
+predicted.nn.values <- neuralnet::compute(nn_model, creditcart.test.two)
+
+```
+
+
+```{r evalu, echo=TRUE}
+predictions <- sapply(predicted.nn.values$net, round)
+head(predictions)
+
+#collect the data to create the evaluation measures
+table(predictions, creditcart.test.two$Class)
+
+nncfm<-table(predictions, creditcart.test.two$Class)
+rnn<-confusionMatrix(nncfm)
+
+
+
+conf_mat(truth = creditcart.test.two$Class, estimate = predictions)
+
+
+# create new confusion matrix for Actual + Predicted labels
+con_matrx <- table(Actual = creditcart.test.two$Class, Predicted =predictions )
+
+# convert new confusion matrix to data frame
+hm <- as.data.frame(as.table(con_matrx))
+
+#create visual of confusion matrix
+plot_confusion_matrix(hm , 
+                      target_col = "Actual", 
+                      prediction_col = "Predicted",
+                      counts_col = "Freq")
+
+```
+
+
+```{r evalu2, echo=TRUE}
+
+
+precision <- rnn$byClass['Pos Pred Value']    
+recall <- rnn$byClass['Sensitivity']
+print(rnn$byClass)
+
+library(pROC)
+# Create the ROC curve
+roc_obj <- roc(creditcart.test.two$Class, predictions)
+plot(roc_obj, main = "ROC Curve for the Logistic Regression Model")
+
+# Calculate the AUC
+auc_value <- auc(roc_obj)
+cat("AUC:", auc_value, "\n")
+```
+
+
