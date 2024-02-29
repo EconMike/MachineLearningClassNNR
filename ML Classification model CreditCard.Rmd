@@ -19,6 +19,12 @@ library(ggplot2)
 # load pk
 library(caret)
 library(tidymodels)
+# for Kaggle
+library(data.table)
+library(readr)
+library(devtools)
+if(!require(kaggler)) devtools::install_github("ldurazo/kaggler")
+
 # function to set plot height and width
 fig <- function(width, heigth){
      options(repr.plot.width = width, repr.plot.height = heigth)
@@ -27,9 +33,20 @@ fig <- function(width, heigth){
 ```
 
 ## Classification models
+```{r download, include=FALSE}
+# this follows the API request instructions at https://medium.com/mcd-unison/how-to-use-kaggle-api-to-download-datasets-in-r-312179c7a99c
+# you can also download directly from Kaggle
+kgl_auth(creds_file = 'kaggle.json')
+response <- kgl_datasets_download_all(owner_dataset = "mlg-ulb/creditcardfraud")
+
+dir.create(file.path("data"), showWarnings = FALSE)
+download.file(response[["url"]], "data/temp.zip", mode="wb")
+unzip_result <- unzip("data/temp.zip", exdir = "data/", overwrite = TRUE)
+```
+
 
 ```{r import, echo=TRUE}
-df<- read.csv("F:/-Directory-/creditcard.csv", stringsAsFactors=TRUE)
+df <- fread("data/creditcard.csv", stringsAsFactors=T) |> as.data.frame()
 
 df1<- df #%>%select(Class, Time, Amount)
 # Convert class to factor
@@ -103,8 +120,6 @@ df_split<- sample.split(df1,SplitRatio = 0.8)
 # Set seed for reproducible results
 train = subset(df1, df_split == TRUE)
 test  = subset(df1, df_split == FALSE)
-
-
 ```
 
 Lets look at the training dataset and to see Fraudulent transactions across time.
@@ -161,8 +176,6 @@ Create predictions on the test dataset
 # Perform predictions on the test data
 log_test <- predict(log_fit, new_data = test) %>% 
   bind_cols(test %>% select(Class))
-
-
 ```
 
 Creating model evaulation measures.  Below is the confusion matrix
